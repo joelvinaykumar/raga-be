@@ -1,0 +1,61 @@
+# Environment Variables
+.env
+.env.local
+.env.production
+*.env
+
+# Python
+__pycache__/
+chroma_db/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# IDE specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Database files (if using local SQLite or similar)
+*.db
+*.sqlite3
+*.sqlite
+
+# Log files
+*.log
+logs/
+
+# Testing related files
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# OS generated files
+.DS_Store
+Thumbs.db
