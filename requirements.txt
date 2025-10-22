@@ -68,7 +68,7 @@ langchain-openai==0.2.12
 langchain-text-splitters==0.3.3
 langsmith==0.2.3
 llama-hub==0.0.45
-llama-index==0.8.57
+llama-index
 lxml==4.9.3
 markdown-it-py==3.0.0
 MarkupSafe==3.0.2
