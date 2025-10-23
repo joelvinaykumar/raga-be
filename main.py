@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 import uuid
 import logging
+import uvicorn
 
 
 logging.basicConfig(filename='app.log', level=logging.INFO)
@@ -15,7 +16,7 @@ logger = logging.getLogger(__name__)
 app = FastAPI()
 
 origins = [
-    "http://localhost:5173",  # Example frontend URL
+    "http://localhost:3000",  # Example frontend URL
 ]
 
 app.add_middleware(
@@ -122,3 +123,6 @@ def delete_document(request: DeleteFileRequest):
             return {"error": f"Deleted from Chroma but failed to delete document with file_id {request.file_id} from the database."}
     else:
         return {"error": f"Failed to delete document with file_id {request.file_id} from Chroma."}
+    
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=os.getenv("PORT", default=8080))
