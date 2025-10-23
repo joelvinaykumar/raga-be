@@ -60,7 +60,7 @@ jsonpointer
 jsonschema
 jsonschema-specifications
 kubernetes
-langchain
+langchain>=0.1.0
 langchain-chroma
 langchain-community
 langchain-core
