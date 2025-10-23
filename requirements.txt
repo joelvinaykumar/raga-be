@@ -103,7 +103,7 @@ posthog==5.4.0
 protobuf==5.29.1
 psutil==5.9.6
 psycopg2==2.9.6
-psycopg2-binary==2.9.9
+psycopg2-binary==2.9.3
 pyarrow==18.1.0
 pyasn1==0.6.1
 pyasn1_modules==0.4.2
