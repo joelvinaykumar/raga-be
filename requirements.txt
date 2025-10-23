@@ -60,10 +60,10 @@ jsonpointer
 jsonschema
 jsonschema-specifications
 kubernetes
-langchain>=1.0.0
+langchain==1.0.0
+langchain-core==1.0.0
 langchain-chroma
 langchain-community
-langchain-core
 langchain-openai
 langchain-text-splitters
 langsmith
