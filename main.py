@@ -135,4 +135,4 @@ def delete_document(request: DeleteFileRequest):
         return {"error": f"Failed to delete document with file_id {request.file_id} from Chroma."}
     
 if __name__ == "__main__":
-    uvicorn.run(app, host="localhost", port=os.getenv("PORT", default=8080))
+    uvicorn.run(app, host="localhost", port=int(os.getenv("PORT", default=8080)))
