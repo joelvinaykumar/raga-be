@@ -5,6 +5,7 @@ from langchain_utils import get_rag_chain
 from db_utils import insert_application_logs, get_chat_history, get_all_documents, get_all_sessions, delete_session, insert_document_record, delete_document_record
 from chroma_utils import index_document_to_chroma,get_chunks_from_chroma, delete_doc_from_chroma
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 import os
 import uuid
 import logging
@@ -14,6 +15,7 @@ import uvicorn
 logging.basicConfig(filename='app.log', level=logging.INFO)
 logger = logging.getLogger(__name__)
 app = FastAPI()
+favicon_path = 'raga-favicon.png'
 
 origins = [
     "http://localhost:3000",  # Example frontend URL
@@ -26,6 +28,14 @@ app.add_middleware(
     allow_methods=["*"],     # Allow all standard HTTP methods
     allow_headers=["*"],     # Allow all standard HTTP headers
 )
+
+@app.get("/")
+async def read_root():
+    return {"message": "Hello World"}
+
+@app.get('/favicon.ico', include_in_schema=False)
+async def favicon():
+    return FileResponse(favicon_path)
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
@@ -125,4 +135,4 @@ def delete_document(request: DeleteFileRequest):
         return {"error": f"Failed to delete document with file_id {request.file_id} from Chroma."}
     
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=os.getenv("PORT", default=8080))
+    uvicorn.run(app, host="localhost", port=os.getenv("PORT", default=8080))
