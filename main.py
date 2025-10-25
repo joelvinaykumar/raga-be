@@ -19,7 +19,7 @@ favicon_path = 'raga-favicon.png'
 
 origins = [
     "http://localhost:3000",  # Example frontend URL
-    "https://raga-fe.up.railway.app/"
+    "https://raga-fe.up.railway.app"
 ]
 
 app.add_middleware(
