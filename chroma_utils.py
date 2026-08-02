@@ -6,13 +6,26 @@ from typing import List
 from langchain_core.documents import Document
 from dotenv import load_dotenv
 import os
+import tempfile
 load_dotenv()
 
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 
+def _get_persist_dir() -> str:
+    default = os.path.join(os.getcwd(), "chroma_db")
+    try:
+        os.makedirs(default, exist_ok=True)
+        probe = os.path.join(default, ".write_test")
+        with open(probe, "w") as f:
+            f.write("")
+        os.remove(probe)
+        return default
+    except OSError:
+        return os.path.join(tempfile.gettempdir(), "chroma_db")
+
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200, length_function=len)
 embedding_function = OpenAIEmbeddings(api_key=OPENAI_API_KEY)
-vectorstore = Chroma(persist_directory="./chroma_db", embedding_function=embedding_function)
+vectorstore = Chroma(persist_directory=_get_persist_dir(), embedding_function=embedding_function)
 
 def load_and_split_document(file_path: str) -> List[Document]:
     if file_path.endswith('.pdf'):

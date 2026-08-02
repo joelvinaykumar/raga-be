@@ -19,7 +19,10 @@ from pydantic_models import QueryInput, QueryResponse, DocumentInfo, SessionInfo
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 
 
-logging.basicConfig(filename='app.log', level=logging.INFO)
+try:
+    logging.basicConfig(filename='app.log', level=logging.INFO)
+except OSError:
+    logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 app = FastAPI(
     title="RAGA - Rag As A Service",

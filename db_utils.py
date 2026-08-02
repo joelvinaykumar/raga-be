@@ -1,8 +1,20 @@
 import sqlite3
+import os
+import tempfile
 from fastapi import HTTPException
 
 
-DB_NAME = "rag_app.db"
+def _get_db_path() -> str:
+    default = os.path.join(os.getcwd(), "rag_app.db")
+    try:
+        with open(default, "a"):
+            pass
+        return default
+    except OSError:
+        return os.path.join(tempfile.gettempdir(), "rag_app.db")
+
+
+DB_NAME = _get_db_path()
 
 def get_db_connection():
     conn = sqlite3.connect(DB_NAME)
