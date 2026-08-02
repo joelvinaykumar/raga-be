@@ -40,6 +40,8 @@ def create_rag_store():
                      name TEXT,
                      description TEXT,
                      top_k REAL,
+                     chunk_size INTEGER,
+                     embedding_model TEXT,
                      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     conn.close()
