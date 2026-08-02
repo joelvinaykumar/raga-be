@@ -33,7 +33,8 @@ favicon_path = 'raga-favicon.png'
 
 origins = [
     "http://localhost:5173",  # Example frontend URL
-    "https://raga-fe.up.railway.app"
+    "https://raga-fe.up.railway.app",
+    "https://raga-fe.vercel.app"
 ]
 
 app.add_middleware(
