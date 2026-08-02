@@ -1,245 +1,208 @@
-import sqlite3
 import os
-import tempfile
+from datetime import datetime, timezone
 from fastapi import HTTPException
+from dotenv import load_dotenv
+from supabase import create_client
 
+load_dotenv()
 
-def _get_db_path() -> str:
-    default = os.path.join(os.getcwd(), "rag_app.db")
-    try:
-        with open(default, "a"):
-            pass
-        return default
-    except OSError:
-        return os.path.join(tempfile.gettempdir(), "rag_app.db")
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_JWT_SECRET")
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-
-DB_NAME = _get_db_path()
-
-def get_db_connection():
-    conn = sqlite3.connect(DB_NAME)
-    conn.row_factory = sqlite3.Row
-    return conn
-
-def create_application_logs():
-    conn = get_db_connection()
-    conn.execute('''CREATE TABLE IF NOT EXISTS application_logs
-                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                     session_id TEXT,
-                     user_query TEXT,
-                     gpt_response TEXT,
-                     model TEXT,
-                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    conn.close()
-
-def create_rag_store():
-    conn = get_db_connection()
-    conn.execute('''CREATE TABLE IF NOT EXISTS rag_store
-                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                     rag_id TEXT,
-                     name TEXT,
-                     description TEXT,
-                     top_k REAL,
-                     chunk_size INTEGER,
-                     embedding_model TEXT,
-                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    conn.close()
-
-def create_rag_document_store():
-    conn = get_db_connection()
-    conn.execute('''CREATE TABLE IF NOT EXISTS rag_document_store
-                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                     rag_id TEXT,
-                     filename TEXT,
-                     filesize INT,
-                     upload_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    conn.close()
 
 def insert_application_logs(session_id, user_query, gpt_response, model):
-    conn = get_db_connection()
-    conn.execute('INSERT INTO application_logs (session_id, user_query, gpt_response, model) VALUES (?, ?, ?, ?)',
-                 (session_id, user_query, gpt_response, model))
-    conn.commit()
-    conn.close()
+    supabase.table("application_logs").insert({
+        "session_id": session_id,
+        "user_query": user_query,
+        "gpt_response": gpt_response,
+        "model": model,
+    }).execute()
+
 
 def get_chat_history(session_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT user_query, gpt_response FROM application_logs WHERE session_id = ? ORDER BY created_at', (session_id,))
+    rows = (supabase.table("application_logs")
+            .select("user_query, gpt_response")
+            .eq("session_id", session_id)
+            .order("created_at")
+            .execute().data or [])
     messages = []
-    for row in cursor.fetchall():
-        messages.extend([
-            {"role": "user", "content": row['user_query']},
-            {"role": "assistant", "content": row['gpt_response']}
-        ])
-    conn.close()
+    for row in rows:
+        messages.append({"role": "user", "content": row["user_query"]})
+        messages.append({"role": "assistant", "content": row["gpt_response"]})
     return messages
 
-def create_document_store():
-    conn = get_db_connection()
-    conn.execute('''CREATE TABLE IF NOT EXISTS document_store
-                    (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                     filename TEXT,
-                     filesize INT,
-                     session_id VARCHAR(10),
-                     upload_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    conn.close()
 
 def insert_document_record(filename, filesize, session_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('INSERT INTO document_store (filename, filesize, session_id) VALUES (?, ?, ?)', (filename, filesize, session_id))
-    file_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    return file_id
+    result = supabase.table("document_store").insert({
+        "filename": filename,
+        "filesize": filesize,
+        "session_id": session_id,
+    }).execute()
+    data = result.data or []
+    return data[0]["id"] if data else None
+
 
 def delete_document_record(file_id):
-    conn = get_db_connection()
-    conn.execute('DELETE FROM document_store WHERE id = ?', (file_id,))
-    conn.commit()
-    conn.close()
+    supabase.table("document_store").delete().eq("id", file_id).execute()
     return True
 
+
 def get_all_documents(session_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''SELECT id, filename, filesize, upload_timestamp 
-        FROM document_store 
-        WHERE session_id = ? 
-        ORDER BY upload_timestamp DESC''',
-        (session_id,)
-    )
-    documents = cursor.fetchall()
-    conn.close()
-    return [dict(doc) for doc in documents]
+    return (supabase.table("document_store")
+            .select("*")
+            .eq("session_id", session_id)
+            .order("upload_timestamp", desc=True)
+            .execute().data or [])
+
 
 def get_all_sessions():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('''SELECT s.session_id, s.user_query, sk.knowledgebase_id
-                    FROM (
-                    SELECT session_id, user_query,
-                            ROW_NUMBER() OVER (PARTITION BY session_id ORDER BY created_at ASC) AS rn
-                    FROM application_logs
-                    ) s
-                    LEFT JOIN session_knowledgebase sk ON s.session_id = sk.session_id
-                    WHERE s.rn = 1''')
-    sessions = cursor.fetchall()
-    conn.close()
-    return [dict(session) for session in sessions]
+    logs = (supabase.table("application_logs")
+            .select("session_id, user_query, created_at")
+            .order("created_at")
+            .execute().data or [])
+    kb = (supabase.table("session_knowledgebase")
+          .select("session_id, knowledgebase_id")
+          .execute().data or [])
+    kb_map = {row["session_id"]: row["knowledgebase_id"] for row in kb}
+    first_by_session = {}
+    for row in logs:
+        session_id = row["session_id"]
+        if session_id not in first_by_session:
+            first_by_session[session_id] = {
+                "session_id": session_id,
+                "user_query": row["user_query"],
+                "knowledgebase_id": kb_map.get(session_id),
+            }
+    return list(first_by_session.values())
+
 
 def delete_session(session_id):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT session_id FROM application_logs WHERE session_id = ?;', (session_id,))
-    session = cursor.fetchone()
-    if session:
-        cursor.execute('DELETE FROM application_logs WHERE session_id = ?;', (session_id,))
-        conn.commit()
-        conn.close()
-        return {"message": "Deleted successfully"}
-    else:
-        conn.close()
+    rows = (supabase.table("application_logs")
+            .select("session_id")
+            .eq("session_id", session_id)
+            .limit(1)
+            .execute().data or [])
+    if not rows:
         raise HTTPException(status_code=404, detail="Session not found")
+    supabase.table("application_logs").delete().eq("session_id", session_id).execute()
+    return {"message": "Deleted successfully"}
+
 
 # RAG management helper functions
 
 def create_rag_entry(rag_id: str, name: str, description: str, top_k: float):
-    conn = get_db_connection()
-    conn.execute('INSERT INTO rag_store (rag_id, name, description, top_k) VALUES (?, ?, ?, ?)',
-                 (rag_id, name, description, top_k))
-    conn.commit()
-    conn.close()
+    supabase.table("rag_store").insert({
+        "rag_id": rag_id,
+        "name": name,
+        "description": description,
+        "top_k": top_k,
+    }).execute()
+
 
 def get_rag_entry(rag_id: str):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM rag_store WHERE rag_id = ?', (rag_id,))
-    rag = cursor.fetchone()
-    conn.close()
-    return rag
+    rows = supabase.table("rag_store").select("*").eq("rag_id", rag_id).execute().data or []
+    return rows[0] if rows else None
+
 
 def delete_rag_entry(rag_id: str):
-    conn = get_db_connection()
-    conn.execute('DELETE FROM rag_store WHERE rag_id = ?', (rag_id,))
-    conn.commit()
-    conn.close()
+    supabase.table("rag_store").delete().eq("rag_id", rag_id).execute()
     return True
 
+
 def list_rags():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM rag_store ORDER BY created_at DESC')
-    rows = cursor.fetchall()
-    conn.close()
-    return [dict(row) for row in rows]
+    return (supabase.table("rag_store")
+            .select("*")
+            .order("created_at", desc=True)
+            .execute().data or [])
+
+
+# RAG-specific CRUD used by api/rag/endpoints.py
+
+def get_all_rag_configs():
+    return (supabase.table("rag_store")
+            .select("*")
+            .order("created_at")
+            .execute().data or [])
+
+
+def create_rag_record(rag_id: str, name: str, description: str, top_k: float,
+                      chunk_size: int | None, embedding_model: str | None):
+    supabase.table("rag_store").insert({
+        "rag_id": rag_id,
+        "name": name,
+        "description": description,
+        "top_k": top_k,
+        "chunk_size": chunk_size,
+        "embedding_model": embedding_model,
+    }).execute()
+
+
+def get_rag_record(rag_id: str):
+    rows = (supabase.table("rag_store")
+            .select("rag_id, name, description, top_k, chunk_size, embedding_model")
+            .eq("rag_id", rag_id)
+            .execute().data or [])
+    return rows[0] if rows else None
+
+
+def update_rag_record(rag_id: str, name: str | None = None, description: str | None = None):
+    payload = {"updated_at": datetime.now(timezone.utc).isoformat()}
+    if name is not None:
+        payload["name"] = name
+    if description is not None:
+        payload["description"] = description
+    supabase.table("rag_store").update(payload).eq("rag_id", rag_id).execute()
+    return get_rag_record(rag_id)
+
+
+def delete_rag_record(rag_id: str):
+    supabase.table("rag_store").delete().eq("rag_id", rag_id).execute()
+    supabase.table("rag_document_store").delete().eq("rag_id", rag_id).execute()
+    supabase.table("session_knowledgebase").update(
+        {"knowledgebase_id": None}
+    ).eq("knowledgebase_id", rag_id).execute()
+    return True
+
 
 # Document store for each RAG
 
 def insert_rag_document(rag_id: str, filename: str, filesize: int):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('INSERT INTO rag_document_store (rag_id, filename, filesize) VALUES (?, ?, ?)',
-                 (rag_id, filename, filesize))
-    doc_id = cursor.lastrowid
-    conn.commit()
-    conn.close()
-    return doc_id
+    result = supabase.table("rag_document_store").insert({
+        "rag_id": rag_id,
+        "filename": filename,
+        "filesize": filesize,
+    }).execute()
+    data = result.data or []
+    return data[0]["id"] if data else None
+
 
 def get_rag_documents(rag_id: str):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM rag_document_store WHERE rag_id = ? ORDER BY upload_timestamp DESC', (rag_id,))
-    docs = cursor.fetchall()
-    conn.close()
-    return [dict(doc) for doc in docs]
+    return (supabase.table("rag_document_store")
+            .select("*")
+            .eq("rag_id", rag_id)
+            .order("upload_timestamp", desc=True)
+            .execute().data or [])
+
 
 def delete_rag_document(doc_id: int):
-    conn = get_db_connection()
-    conn.execute('DELETE FROM rag_document_store WHERE id = ?', (doc_id,))
-    conn.commit()
-    conn.close()
+    supabase.table("rag_document_store").delete().eq("id", doc_id).execute()
     return True
 
 
-def create_session_knowledgebase():
-    conn = get_db_connection()
-    conn.execute('''CREATE TABLE IF NOT EXISTS session_knowledgebase
-                    (session_id TEXT PRIMARY KEY,
-                     knowledgebase_id TEXT,
-                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
-    conn.close()
+# Session <-> knowledgebase mapping
 
 def set_session_knowledgebase(session_id: str, knowledgebase_id: str | None):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT session_id FROM session_knowledgebase WHERE session_id = ?', (session_id,))
-    existing = cursor.fetchone()
-    if existing:
-        conn.execute('UPDATE session_knowledgebase SET knowledgebase_id = ?, updated_at = CURRENT_TIMESTAMP WHERE session_id = ?',
-                     (knowledgebase_id, session_id))
-    else:
-        conn.execute('INSERT INTO session_knowledgebase (session_id, knowledgebase_id) VALUES (?, ?)',
-                     (session_id, knowledgebase_id))
-    conn.commit()
-    conn.close()
+    supabase.table("session_knowledgebase").upsert(
+        {"session_id": session_id, "knowledgebase_id": knowledgebase_id},
+        on_conflict="session_id",
+    ).execute()
+
 
 def get_session_knowledgebase(session_id: str) -> str | None:
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT knowledgebase_id FROM session_knowledgebase WHERE session_id = ?', (session_id,))
-    row = cursor.fetchone()
-    conn.close()
-    if row:
-        return row['knowledgebase_id']
-    return None
-
-# Initialize the database tables
-create_application_logs()
-create_document_store()
-create_rag_store()
-create_rag_document_store()
-create_session_knowledgebase()
+    rows = (supabase.table("session_knowledgebase")
+            .select("knowledgebase_id")
+            .eq("session_id", session_id)
+            .limit(1)
+            .execute().data or [])
+    return rows[0]["knowledgebase_id"] if rows else None

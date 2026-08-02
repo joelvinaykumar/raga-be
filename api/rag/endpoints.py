@@ -5,100 +5,45 @@ from .models import RagCreateModel, RagResponseModel, RagDetailModel, RagPatchMo
 from fastapi import File, UploadFile
 from typing import List
 from schemas import RagCreateRequest, RagResponse, DocumentUploadResponse
-from db_utils import get_db_connection
+from db_utils import get_all_rag_configs, create_rag_record, get_rag_record, update_rag_record, delete_rag_record
 import os, shutil, tempfile
 router = APIRouter()
 
 @router.get("/all/", status_code=status.HTTP_200_OK)
 @router.get("/all", status_code=status.HTTP_200_OK)
 async def get_all_configs():
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT * FROM rag_store ORDER BY created_at')
-    stores = cursor.fetchall()
-    conn.close()
-    return stores
+    return get_all_rag_configs()
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
 async def create_rag(input: RagCreateModel):
     if input.top_k <= 0:
         raise HTTPException(status_code=400, detail="Top K must be a positive integer")
-    # Ensure rag_store has chunk_size and embedding_model columns (SQLite ALTER TABLE)
-    conn = get_db_connection()
-    try:
-        conn.execute('ALTER TABLE rag_store ADD COLUMN chunk_size INTEGER')
-    except Exception:
-        pass
-    try:
-        conn.execute('ALTER TABLE rag_store ADD COLUMN embedding_model TEXT')
-    except Exception:
-        pass
-    conn.commit()
     rag_id = str(uuid.uuid4())
-    conn.execute('INSERT INTO rag_store (rag_id, name, description, top_k, chunk_size, embedding_model) VALUES (?, ?, ?, ?, ?, ?)',
-                 (rag_id, input.name, input.description, input.top_k, input.chunk_size, input.embedding_model))
-    conn.commit()
-    conn.close()
+    create_rag_record(rag_id, input.name, input.description, input.top_k, input.chunk_size, input.embedding_model)
     return {"rag_id": rag_id, "message": "RAG created"}
 
 @router.get("/{rag_id}", response_model=RagDetailModel, status_code=status.HTTP_200_OK)
 async def get_rag(rag_id: str):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT rag_id, name, description, top_k, chunk_size, embedding_model FROM rag_store WHERE rag_id = ?', (rag_id,))
-    rag = cursor.fetchone()
-    conn.close()
+    rag = get_rag_record(rag_id)
     if not rag:
         raise HTTPException(status_code=404, detail="RAG not found")
-    return {
-        "rag_id": rag[0],
-        "name": rag[1],
-        "description": rag[2],
-        "top_k": rag[3],
-        "chunk_size": rag[4],
-        "embedding_model": rag[5],
-    }
+    return rag
 
 @router.patch("/{rag_id}", response_model=RagDetailModel, status_code=status.HTTP_200_OK)
 async def update_rag(rag_id: str, input: RagPatchModel):
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT name, description FROM rag_store WHERE rag_id = ?', (rag_id,))
-    rag = cursor.fetchone()
-    if not rag:
-        conn.close()
+    existing = get_rag_record(rag_id)
+    if not existing:
         raise HTTPException(status_code=404, detail="RAG not found")
-    name = input.name if input.name is not None else rag[0]
-    description = input.description if input.description is not None else rag[1]
-    conn.execute('UPDATE rag_store SET name = ?, description = ?, updated_at = CURRENT_TIMESTAMP WHERE rag_id = ?',
-                 (name, description, rag_id))
-    conn.commit()
-    cursor.execute('SELECT rag_id, name, description, top_k, chunk_size, embedding_model FROM rag_store WHERE rag_id = ?', (rag_id,))
-    row = cursor.fetchone()
-    conn.close()
-    return {
-        "rag_id": row[0],
-        "name": row[1],
-        "description": row[2],
-        "top_k": row[3],
-        "chunk_size": row[4],
-        "embedding_model": row[5],
-    }
+    name = input.name if input.name is not None else existing["name"]
+    description = input.description if input.description is not None else existing["description"]
+    return update_rag_record(rag_id, name, description)
 
 @router.delete("/{rag_id}", response_model=RagResponseModel, status_code=status.HTTP_200_OK)
 async def delete_rag(rag_id: str):
     from chroma_utils import delete_rag_from_chroma
-    conn = get_db_connection()
-    cursor = conn.cursor()
-    cursor.execute('SELECT rag_id FROM rag_store WHERE rag_id = ?', (rag_id,))
-    if not cursor.fetchone():
-        conn.close()
+    if not get_rag_record(rag_id):
         raise HTTPException(status_code=404, detail="RAG not found")
-    conn.execute('DELETE FROM rag_store WHERE rag_id = ?', (rag_id,))
-    conn.execute('DELETE FROM rag_document_store WHERE rag_id = ?', (rag_id,))
-    conn.execute('UPDATE session_knowledgebase SET knowledgebase_id = NULL WHERE knowledgebase_id = ?', (rag_id,))
-    conn.commit()
-    conn.close()
+    delete_rag_record(rag_id)
     delete_rag_from_chroma(rag_id)
     return {"message": "RAG store deleted successfully", "rag_id": rag_id}
 
