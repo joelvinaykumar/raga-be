@@ -25,7 +25,22 @@ def _get_persist_dir() -> str:
 
 text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=200, length_function=len)
 embedding_function = OpenAIEmbeddings(api_key=OPENAI_API_KEY)
-vectorstore = Chroma(persist_directory=_get_persist_dir(), embedding_function=embedding_function)
+
+def _build_vectorstore():
+    api_key = os.getenv("CHROMA_API_KEY")
+    if api_key:
+        return Chroma(
+            embedding_function=embedding_function,
+            chroma_cloud_api_key=api_key,
+            tenant=os.getenv("CHROMA_TENANT"),
+            database=os.getenv("CHROMA_DATABASE"),
+        )
+    return Chroma(
+        embedding_function=embedding_function,
+        persist_directory=_get_persist_dir(),
+    )
+
+vectorstore = _build_vectorstore()
 
 def load_and_split_document(file_path: str) -> List[Document]:
     if file_path.endswith('.pdf'):
