@@ -3,6 +3,7 @@ import json
 import logging
 import uuid
 import shutil
+import tempfile
 
 from fastapi import FastAPI, File, Request, UploadFile, HTTPException, Depends
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
@@ -132,9 +133,10 @@ def upload_and_index_document(session_id: str, file: UploadFile = File(...)):
     
     if file_extension not in allowed_extensions:
         raise HTTPException(status_code=400, detail=f"Unsupported file type. Allowed types are: {', '.join(allowed_extensions)}")
-    
-    temp_file_path = f"temp_{file.filename}"
-    
+
+    fd, temp_file_path = tempfile.mkstemp(suffix=file_extension)
+    os.close(fd)
+
     try:
         # Save the uploaded file to a temporary file
         with open(temp_file_path, "wb") as buffer:

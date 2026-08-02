@@ -10,6 +10,7 @@ import os, shutil, tempfile
 router = APIRouter()
 
 @router.get("/all/", status_code=status.HTTP_200_OK)
+@router.get("/all", status_code=status.HTTP_200_OK)
 async def get_all_configs():
     conn = get_db_connection()
     cursor = conn.cursor()
@@ -105,7 +106,7 @@ async def delete_rag(rag_id: str):
 @router.post("/{rag_id}/documents", response_model=DocumentUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_documents(rag_id: str, files: List[UploadFile] = File(...)):
     # Save uploaded files temporarily, insert DB record, and index into Chroma
-    from db_utils import insert_rag_document
+    from db_utils import insert_rag_document, delete_rag_document
     from chroma_utils import index_document_to_chroma
     import os, shutil, tempfile
     uploaded = []
@@ -119,9 +120,12 @@ async def upload_documents(rag_id: str, files: List[UploadFile] = File(...)):
         # Insert DB record
         doc_id = insert_rag_document(rag_id, upload.filename, len(content))
         # Index document
-        index_document_to_chroma(file_path, doc_id, rag_id)
+        success = index_document_to_chroma(file_path, doc_id, rag_id)
         # Cleanup
         shutil.rmtree(temp_dir)
+        if not success:
+            delete_rag_document(doc_id)
+            raise HTTPException(status_code=500, detail=f"Failed to index {upload.filename} into Chroma.")
         uploaded.append({"document_id": doc_id, "filename": upload.filename})
     # Return first uploaded document info
     first = uploaded[0]

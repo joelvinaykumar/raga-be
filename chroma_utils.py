@@ -7,7 +7,10 @@ from langchain_core.documents import Document
 from dotenv import load_dotenv
 import os
 import tempfile
+import logging
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 OPENAI_API_KEY = os.environ["OPENAI_API_KEY"]
 
@@ -65,9 +68,10 @@ def index_document_to_chroma(file_path: str, file_id: int, rag_id: str | None = 
                 split.metadata['rag_id'] = rag_id
 
         vectorstore.add_documents(splits)
+        logger.info("Indexed %d chunks for file_id=%s (rag_id=%s)", len(splits), file_id, rag_id)
         return True
     except Exception as e:
-        print(f"Error indexing document: {e}")
+        logger.error("Error indexing document %s: %s", file_path, e, exc_info=True)
         return False
 
 def get_chunks_from_chroma(query: str, knowledgebase_id: str | None = None):
