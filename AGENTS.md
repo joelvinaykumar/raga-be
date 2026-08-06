@@ -7,7 +7,7 @@
 - **watchfiles** for auto-reload in dev
 
 ## Key Files
-- `main.py` — FastAPI app, `/chat`, `/upload-doc`, `/search-rag` endpoints
+- `main.py` — FastAPI app, `/chat`, `/upload-doc`, session + lifecycle endpoints
 - `chroma_utils.py` — ChromaDB indexing, retrieval, deletion
 - `db_utils.py` — SQLite helpers (sessions, documents, logs, knowledgebase mapping)
 - `langchain_utils.py` — LangChain RAG chain (currently unused by `/chat`; `main.py` builds prompts manually)

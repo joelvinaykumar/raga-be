@@ -27,7 +27,7 @@ A production-ready **Retrieval-Augmented Generation (RAG)** API built with **Fas
 │                        FastAPI Application (main.py)                    │
 │                                                                         │
 │  ┌────────────┐   ┌──────────────┐   ┌──────────────────────────────┐   │
-│  │ Auth       │   │ /chat        │   │ /upload-doc · /search-rag    │   │
+│  │ Auth       │   │ /chat        │   │ /upload-doc · /rag/*         │   │
 │  │ Middleware │   │ (SSE stream) │   │ /rag/* · /chat-history · ... │   │
 │  └────────────┘   └──────────────┘   └──────────────────────────────┘   │
 │                                                                         │
@@ -58,7 +58,7 @@ The service is split into four layers:
 
 ```
 .
-├── main.py                     # FastAPI app: /chat, /upload-doc, /search-rag, session routes
+├── main.py                     # FastAPI app: /chat, /upload-doc, /rag/*, session routes
 ├── chroma_utils.py             # ChromaDB: indexing, retrieval, deletion; local + Chroma Cloud
 ├── db_utils.py                 # SQLite helpers: sessions, documents, logs, knowledgebase mapping
 ├── langchain_utils.py          # LangChain RAG chain (retrieval-qa with history)
@@ -124,7 +124,6 @@ Two upload paths exist:
 | ------ | ----------------------------- | -------------------------------------------- |
 | POST   | `/chat`                       | Ask a question (JSON or SSE stream)          |
 | POST   | `/upload-doc/{session_id}`    | Upload & index a document                    |
-| GET    | `/search-rag?query=`          | Raw similarity search across all documents   |
 | GET    | `/chat-history/{session_id}`  | Chat history for a session                   |
 | GET    | `/list-docs/{session_id}`     | Documents belonging to a session             |
 | GET    | `/list-sessions`              | All sessions                                 |

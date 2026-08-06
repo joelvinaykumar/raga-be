@@ -1,4 +1,5 @@
 import os
+import logging
 from dotenv import load_dotenv
 from fastapi import Request, HTTPException
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -8,6 +9,11 @@ load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
+logger = logging.getLogger(__name__)
+
+if not SUPABASE_URL or not SUPABASE_JWT_SECRET:
+    raise RuntimeError("SUPABASE_URL and SUPABASE_JWT_SECRET must be configured")
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_JWT_SECRET)
 
 
@@ -32,11 +38,10 @@ class JWTBearer(HTTPBearer):
         isTokenValid: bool = False
         try:
             user_claims = supabase.auth.get_claims(jwtoken)
-            print("User claims:", user_claims)
             if user_claims:
                 isTokenValid = True
         except Exception as e:
-            print(f"Error verifying token: {e}")
+            logger.warning("JWT verification failed: %s", str(e))
             isTokenValid = False
         
         return isTokenValid

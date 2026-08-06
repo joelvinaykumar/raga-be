@@ -47,6 +47,21 @@ app.add_middleware(
 )
 app.include_router(rag_router.router, prefix="/rag", tags=["RAG Config"], dependencies=[Depends(JWTBearer())])
 
+REMOVED_ROUTES = {"/search-rag"}
+
+
+@app.middleware("http")
+async def monitor_removed_routes(request: Request, call_next):
+    if request.url.path in REMOVED_ROUTES:
+        client_host = request.client.host if request.client else "unknown"
+        logger.warning(
+            "Removed route access attempt path=%s method=%s client_ip=%s",
+            request.url.path,
+            request.method,
+            client_host,
+        )
+    return await call_next(request)
+
 @app.get("/")
 def health():
     return {"message": "Hello World"}
@@ -75,14 +90,14 @@ def stream_chat_response(prompt, session_id, question, model_value):
             full_response += content
             yield f"data: {json.dumps({'content': content})}\n\n"
     insert_application_logs(session_id, question, full_response, model_value)
-    logging.info(f"Session ID: {session_id}, AI Response: {full_response}")
+    logging.info("Session ID: %s, AI response chars: %s", session_id, len(full_response))
     yield f"data: {json.dumps({'done': True})}\n\n"
 
 
 @app.post("/chat", response_model=QueryResponse)
-def chat(query_input: QueryInput):
+def chat(query_input: QueryInput, _token: str = Depends(JWTBearer())):
     session_id = query_input.session_id
-    logging.info(f"Session ID: {session_id}, User Query: {query_input.question}, Model: {query_input.model.value}")
+    logging.info("Session ID: %s, User query chars: %s, Model: %s", session_id, len(query_input.question), query_input.model.value)
     if not session_id:
         session_id = str(uuid.uuid4())
 
@@ -119,15 +134,15 @@ def chat(query_input: QueryInput):
         chunks = []
 
     insert_application_logs(session_id, query_input.question, answer, query_input.model.value)
-    logging.info(f"Session ID: {session_id}, AI Response: {answer}")
+    logging.info("Session ID: %s, AI response chars: %s", session_id, len(answer))
     return QueryResponse(answer=answer, session_id=session_id, model=query_input.model, chunks=chunks)
 
 @app.get("/chat-history/{session_id}")
-def retrieve_chat_history(session_id: str):
+def retrieve_chat_history(session_id: str, _token: str = Depends(JWTBearer())):
     return get_chat_history(session_id)
 
 @app.post("/upload-doc/{session_id}")
-def upload_and_index_document(session_id: str, file: UploadFile = File(...)):
+def upload_and_index_document(session_id: str, file: UploadFile = File(...), _token: str = Depends(JWTBearer())):
     allowed_extensions = ['.pdf', '.docx', '.html']
     file_extension = os.path.splitext(file.filename)[1].lower()
     
@@ -156,29 +171,25 @@ def upload_and_index_document(session_id: str, file: UploadFile = File(...)):
             os.remove(temp_file_path)
 
 @app.get("/list-docs/{session_id}", response_model=list[DocumentInfo])
-def list_documents(session_id: str):
+def list_documents(session_id: str, _token: str = Depends(JWTBearer())):
     return get_all_documents(session_id)
 
-@app.get("/search-rag")
-def serch_rag(query: str):
-    return get_chunks_from_chroma(query)
-
 @app.get("/list-sessions", response_model=list[SessionInfo])
-def list_sessions():
+def list_sessions(_token: str = Depends(JWTBearer())):
     return get_all_sessions()
 
 @app.delete("/delete-session/{session_id}")
-def delete_session_endpoint(session_id: str):
+def delete_session_endpoint(session_id: str, _token: str = Depends(JWTBearer())):
     return delete_session(session_id)
 
 @app.put("/sessions/{session_id}/knowledgebase")
-def modify_session_knowledgebase(session_id: str, request: ModifySessionRequest):
+def modify_session_knowledgebase(session_id: str, request: ModifySessionRequest, _token: str = Depends(JWTBearer())):
     set_session_knowledgebase(session_id, request.knowledgebase_id)
     return {"session_id": session_id, "knowledgebase_id": request.knowledgebase_id}
 
 
 @app.delete("/delete-doc")
-def delete_document(request: DeleteFileRequest):
+def delete_document(request: DeleteFileRequest, _token: str = Depends(JWTBearer())):
     # Delete from Chroma
     chroma_delete_success = delete_doc_from_chroma(request.file_id)
 
