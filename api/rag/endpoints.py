@@ -1,7 +1,15 @@
 import uuid
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
 
-from .models import RagCreateModel, RagResponseModel, RagDetailModel, RagPatchModel
+from middlewares.auth_middleware import get_current_user
+
+from .models import (
+    RagCreateModel,
+    RagResponseModel,
+    RagDetailModel,
+    RagPatchModel,
+    RagPromptSuggestionsResponse,
+)
 from fastapi import File, UploadFile
 from typing import List
 from schemas import RagCreateRequest, RagResponse, DocumentUploadResponse
@@ -9,17 +17,28 @@ from db_utils import get_all_rag_configs, create_rag_record, get_rag_record, upd
 import os, shutil, tempfile
 router = APIRouter()
 
+DEFAULT_RAG_PROMPTS = [
+    "Summarize the most relevant context for my question before answering.",
+    "List key facts from the indexed knowledge and include sources for each.",
+    "What are the top risks, assumptions, and unknowns in this topic?",
+    "Give me a step-by-step plan using only the indexed context.",
+    "Compare two approaches and recommend one based on available context.",
+]
+
 @router.get("/all/", status_code=status.HTTP_200_OK)
 @router.get("/all", status_code=status.HTTP_200_OK)
 async def get_all_configs():
     return get_all_rag_configs()
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
-async def create_rag(input: RagCreateModel):
+async def create_rag(input: RagCreateModel, user: dict = Depends(get_current_user)):
     if input.top_k <= 0:
         raise HTTPException(status_code=400, detail="Top K must be a positive integer")
     rag_id = str(uuid.uuid4())
-    create_rag_record(rag_id, input.name, input.description, input.top_k, input.chunk_size, input.embedding_model)
+    create_rag_record(
+        rag_id, input.name, input.description, input.top_k,
+        input.chunk_size, input.embedding_model, user_id=user["user_id"],
+    )
     return {"rag_id": rag_id, "message": "RAG created"}
 
 @router.get("/{rag_id}", response_model=RagDetailModel, status_code=status.HTTP_200_OK)
@@ -88,3 +107,53 @@ async def delete_document(rag_id: str, doc_id: int):
     delete_rag_document(doc_id)
     delete_doc_from_chroma(doc_id)
     return {"message": "Document deleted"}
+
+
+@router.get("/{rag_id}/prompts/suggestions", response_model=RagPromptSuggestionsResponse, status_code=status.HTTP_200_OK)
+async def get_rag_prompt_suggestions(rag_id: str):
+    from db_utils import get_rag_documents
+
+    rag = get_rag_record(rag_id)
+    if not rag:
+        raise HTTPException(status_code=404, detail="RAG not found")
+
+    documents = get_rag_documents(rag_id)
+    if not documents:
+        return {
+            "rag_id": rag_id,
+            "prompts": DEFAULT_RAG_PROMPTS,
+            "source": "default",
+        }
+
+    rag_name = (rag.get("name") or "this knowledge base").strip()
+    rag_description = (rag.get("description") or "").strip()
+    doc_names = [
+        os.path.splitext(doc.get("filename", ""))[0].replace("_", " ").replace("-", " ").strip()
+        for doc in documents
+        if doc.get("filename")
+    ]
+    unique_doc_names = []
+    seen = set()
+    for name in doc_names:
+        lowered = name.lower()
+        if lowered and lowered not in seen:
+            seen.add(lowered)
+            unique_doc_names.append(name)
+
+    top_docs = unique_doc_names[:3]
+    doc_focus = ", ".join(top_docs) if top_docs else "the indexed documents"
+    domain_focus = rag_description if rag_description else rag_name
+
+    prompts = [
+        f"Summarize the key ideas from {doc_focus} and explain why they matter for {rag_name}.",
+        f"What are the top 5 actionable insights from {doc_focus} for {domain_focus}?",
+        f"Extract important decisions, policies, or requirements from {doc_focus}.",
+        f"Create a step-by-step implementation plan for {domain_focus} using only indexed context.",
+        f"What are the missing gaps or contradictions across {doc_focus}, and what should we verify next?",
+    ]
+
+    return {
+        "rag_id": rag_id,
+        "prompts": prompts[:5],
+        "source": "rag-specific",
+    }

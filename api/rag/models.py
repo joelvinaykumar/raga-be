@@ -33,3 +33,9 @@ class RagDetailModel(BaseModel):
 class RagResponseModel(BaseModel):
     rag_id: str
     message: str
+
+
+class RagPromptSuggestionsResponse(BaseModel):
+    rag_id: str
+    prompts: list[str]
+    source: str

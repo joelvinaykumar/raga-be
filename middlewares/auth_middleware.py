@@ -1,7 +1,7 @@
 import os
 import logging
 from dotenv import load_dotenv
-from fastapi import Request, HTTPException
+from fastapi import Request, HTTPException, Depends, Header
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from supabase import create_client, Client
 
@@ -45,6 +45,54 @@ class JWTBearer(HTTPBearer):
             isTokenValid = False
         
         return isTokenValid
+
+
+def get_current_user(token: str = Depends(JWTBearer())) -> dict:
+    """Resolve the authenticated user's claims from a verified Supabase JWT.
+
+    Returns a dict with at least `user_id` (the Supabase `sub`) and `email`.
+    """
+    try:
+        claims = supabase.auth.get_claims(token)
+    except Exception as e:
+        logger.warning("Could not read JWT claims: %s", str(e))
+        raise HTTPException(status_code=401, detail="Invalid token or expired token.")
+
+    if not claims:
+        raise HTTPException(status_code=401, detail="Invalid token or expired token.")
+
+    # `get_claims` returns a ClaimsResponse TypedDict: {claims, headers, signature}.
+    # The actual JWT payload (with `sub`, `email`) lives under `claims`.
+    if isinstance(claims, dict):
+        data = claims.get("claims") or claims
+    else:
+        data = getattr(claims, "claims", None) or {}
+
+    user_id = data.get("sub")
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Token missing subject claim.")
+
+    return {"user_id": user_id, "email": data.get("email"), "claims": data}
+
+
+def require_api_key(x_api_key: str = Header(None, alias="x-api-key")) -> str:
+    """Authenticate an MCP client via the `x-api-key` header.
+
+    Validates the key against `api_keys`, records last-used telemetry, and
+    returns the owning user's id. Raises 401 for missing/invalid/revoked keys.
+    """
+    # Imported lazily to avoid a circular import (db_utils has no auth deps).
+    from db_utils import get_api_key_record, touch_api_key_last_used
+
+    if not x_api_key:
+        raise HTTPException(status_code=401, detail="Missing x-api-key header.")
+
+    record = get_api_key_record(x_api_key)
+    if not record:
+        raise HTTPException(status_code=401, detail="Invalid or revoked API key.")
+
+    touch_api_key_last_used(x_api_key)
+    return record["user_id"]
 
 
 

@@ -8,6 +8,8 @@ from dotenv import load_dotenv
 import os
 import tempfile
 import logging
+import re
+from pathlib import Path
 load_dotenv()
 
 logger = logging.getLogger(__name__)
@@ -45,6 +47,26 @@ def _build_vectorstore():
 
 vectorstore = _build_vectorstore()
 
+
+_TOKEN_RE = re.compile(r"[a-z0-9]{2,}")
+
+
+def _tokenize(text: str) -> set[str]:
+    if not text:
+        return set()
+    return set(_TOKEN_RE.findall(text.lower()))
+
+
+def _lexical_overlap_score(query: str, content: str) -> float:
+    query_tokens = _tokenize(query)
+    if not query_tokens:
+        return 0.0
+    content_tokens = _tokenize(content)
+    if not content_tokens:
+        return 0.0
+    overlap = len(query_tokens.intersection(content_tokens))
+    return overlap / len(query_tokens)
+
 def load_and_split_document(file_path: str) -> List[Document]:
     if file_path.endswith('.pdf'):
         loader = PyPDFLoader(file_path)
@@ -61,9 +83,14 @@ def load_and_split_document(file_path: str) -> List[Document]:
 def index_document_to_chroma(file_path: str, file_id: int, rag_id: str | None = None) -> bool:
     try:
         splits = load_and_split_document(file_path)
+        filename = Path(file_path).name
 
-        for split in splits:
+        for idx, split in enumerate(splits, start=1):
             split.metadata['file_id'] = file_id
+            split.metadata['filename'] = filename
+            split.metadata['chunk_index'] = idx
+            split.metadata['chunk_id'] = f"{file_id}:{idx}"
+            split.metadata['preview'] = split.page_content[:180]
             if rag_id:
                 split.metadata['rag_id'] = rag_id
 
@@ -74,27 +101,63 @@ def index_document_to_chroma(file_path: str, file_id: int, rag_id: str | None = 
         logger.error("Error indexing document %s: %s", file_path, e, exc_info=True)
         return False
 
-def get_chunks_from_chroma(query: str, knowledgebase_id: str | None = None):
+def get_chunks_from_chroma(
+    query: str,
+    knowledgebase_id: str | None = None,
+    top_k: int = 8,
+    min_relevance_score: float = 0.2,
+):
     try:
+        top_k = max(1, min(int(top_k), 30))
+        fetch_k = max(top_k * 3, 12)
         result = []
         filter_dict = {}
         if knowledgebase_id:
             filter_dict["rag_id"] = knowledgebase_id
         results = vectorstore.similarity_search_with_relevance_scores(
-            query, k=10, filter=filter_dict if filter_dict else None,
+            query, k=fetch_k, filter=filter_dict if filter_dict else None,
         )
+
+        seen = set()
+        rescored = []
         for res, score in results:
-            print(f"* [SIM={score:3f}] {res.page_content} [{res.metadata}]")
-            result.append({
-                "score": score,
+            vector_score = float(score)
+            lexical_score = _lexical_overlap_score(query, res.page_content)
+            blended_score = (0.8 * vector_score) + (0.2 * lexical_score)
+            if blended_score < float(min_relevance_score):
+                continue
+
+            chunk_id = res.metadata.get("chunk_id")
+            dedupe_key = chunk_id or res.page_content[:180]
+            if dedupe_key in seen:
+                continue
+            seen.add(dedupe_key)
+
+            rescored.append({
+                "score": round(blended_score, 6),
+                "vector_score": round(vector_score, 6),
+                "lexical_score": round(lexical_score, 6),
                 "content": res.page_content,
-                "source": res.metadata.get("source", ""),
+                "source": res.metadata.get("source"),
                 "file_id": res.metadata.get("file_id"),
                 "rag_id": res.metadata.get("rag_id"),
+                "chunk_id": chunk_id,
+                "chunk_index": res.metadata.get("chunk_index"),
+                "filename": res.metadata.get("filename"),
+                "preview": res.metadata.get("preview") or res.page_content[:180],
+                "url": res.metadata.get("source"),
             })
+
+        rescored.sort(key=lambda item: item.get("score", 0), reverse=True)
+        result.extend(rescored[:top_k])
+
+        logger.info(
+            "Retrieved %d/%d chunks for rag_id=%s top_k=%d min_score=%s",
+            len(result), len(results), knowledgebase_id, top_k, min_relevance_score,
+        )
         return result
     except Exception as e:
-        print(f"Error in getting chunks from chroma: {e}")
+        logger.error("Error in getting chunks from chroma: %s", e, exc_info=True)
         return []
 
 def delete_doc_from_chroma(file_id: int):

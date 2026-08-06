@@ -178,7 +178,89 @@ This service deploys to **Vercel** as a single serverless function (`main.py`), 
 - **Vectors** — set `CHROMA_API_KEY`, `CHROMA_TENANT`, `CHROMA_DATABASE` to use managed **Chroma Cloud**. Without them the app falls back to a local persistent collection.
 - **Sessions/logs** — SQLite is ephemeral on serverless; wire in a hosted Postgres for production durability.
 
-For a persistent server runtime, the app also runs as a normal FastAPI service (uvicorn) on hosts like Railway.
+For a persistent server runtime, the app runs as a standard FastAPI service (uvicorn) on hosts like **Railway**, which is highly recommended for streaming responses (SSE).
+
+---
+
+## Model Context Protocol (MCP) Server
+
+RAGA mounts a streamable-HTTP **Model Context Protocol (MCP)** server at `/mcp` (powered by FastMCP). This allows external LLM clients, such as **Claude Desktop**, Cursor, or custom agents, to connect directly to your personal knowledge bases and invoke retrieval capabilities as native skills.
+
+### 🔑 Authentication
+The MCP layer uses separate API keys from standard REST endpoints.
+- Authenticators are passed in the `x-api-key` header.
+- Pattern: `raga-token-[6-8 alphanumerics]`.
+- API keys are automatically generated when a user logs in and calls `/me`, meaning zero-friction key provisioning.
+
+### 🔌 Tools Exposed
+The server expands Claude's abilities with three custom tools:
+1. `list_knowledgebases()`: Lists RAG workspaces available to the authenticated token.
+2. `search_rag(knowledgebase_id, query, top_k)`: Perform semantic vector matching over specific documents and get raw background context chunks (without calling LLMs).
+3. `ask_rag(knowledgebase_id, query)`: Answer questions grounded strictly in a knowledge base with integrated citations and sources.
+
+### ⚙️ Claude Desktop Setup
+Add this entry to your Claude configuration file (located at `~/Library/Application Support/Claude/claude_desktop_config.json` on macOS or `%APPDATA%\Claude\claude_desktop_config.json` on Windows):
+
+```json
+{
+  "mcpServers": {
+    "raga": {
+      "type": "sse",
+      "url": "https://your-raga-backend.railway.app/mcp",
+      "headers": {
+        "x-api-key": "raga-token-your_generated_key_here"
+      }
+    }
+  }
+}
+```
+
+---
+
+## Deployment to Railway (Recommended)
+
+Railway is excellent for deploying RAGA because its persistent container runtime fully supports long-lived Server-Sent Events (SSE) connections and doesn't suffer from Serverless Function timeouts (like Vercel).
+
+### Detailed Steps:
+1. **Prepare Database Migrations**:
+   Ensure you have executed the following columns in your Supabase SQL editor:
+   ```sql
+   -- Enable api_keys
+   create table if not exists api_keys (
+     id uuid primary key default gen_random_uuid(),
+     user_id uuid not null references auth.users(id) on delete cascade,
+     api_key text not null unique,
+     revoked boolean not null default false,
+     created_at timestamptz not null default now(),
+     last_used_at timestamptz
+   );
+   alter table api_keys disable row level security;
+   create unique index if not exists api_keys_active_user on api_keys (user_id) where revoked = false;
+
+   -- Add citations to logs
+   alter table application_logs add column if not exists citations jsonb default '[]'::jsonb;
+   alter table application_logs add column if not exists chunks jsonb default '[]'::jsonb;
+   
+   -- Add tenant user mapping to vector directories
+   alter table rag_store add column if not exists user_id uuid references auth.users(id) on delete set null;
+   ```
+
+2. **Deploy Backend**:
+   - Link the `raga-be` directory to a new Railway service.
+   - Set the Start Command to:
+     ```bash
+     uvicorn main:app --host 0.0.0.0 --port $PORT
+     ```
+   - Feed the following environment variables into Railway:
+     - `OPENAI_API_KEY`: Your OpenAI credential.
+     - `SUPABASE_URL`: Your Supabase API host.
+     - `SUPABASE_JWT_SECRET`: Supabase JWT parser key.
+
+3. **Deploy Frontend**:
+   - Link `raga-fe` as a separate Railway or static-serving node.
+   - Inject `VITE_BASE_URL` pointing to the deployed backend's HTTPS endpoint.
+
+---
 
 ## Environment Variables
 
